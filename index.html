@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Leboncoin Reposter (Web)</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 900px; }
+      h1 { font-size: 22px; margin-bottom: 8px; }
+      .muted { color:#666; font-size: 14px; margin-bottom: 16px; }
+      label { font-size: 13px; display:block; margin-top: 10px; }
+      input, button { padding: 10px; font-size: 14px; }
+      input[type="url"], input[type="number"] { width: 100%; box-sizing: border-box; }
+      .grid { display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+      table { width:100%; border-collapse: collapse; margin-top: 16px; }
+      th, td { border:1px solid #ddd; padding: 8px; font-size: 14px; }
+      th { background:#f6f6f6; text-align:left; }
+      .row { display:flex; gap:10px; align-items: center; }
+      .pill { padding:4px 8px; border-radius: 999px; font-size: 12px; }
+      .ok { background:#e6f6ea; color:#237a3b; }
+      .err { background:#fde8e8; color:#b42318; }
+    </style>
+  </head>
+  <body>
+    <h1>Leboncoin Reposter (Web)</h1>
+    <p class="muted">Private, always-on repost scheduler. Keep intervals human-like to avoid flags.</p>
+
+    <div>
+      <label>Listing URL</label>
+      <input id="url" type="url" placeholder="https://www.leboncoin.fr/...">
+      <div class="grid">
+        <div>
+          <label>Every (hours)</label>
+          <input id="hours" type="number" min="1" value="48">
+        </div>
+        <div>
+          <label>Jitter (minutes)</label>
+          <input id="jitter" type="number" min="0" value="7">
+        </div>
+        <div style="display:flex; align-items:flex-end;">
+          <button id="add">Add Schedule</button>
+        </div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>URL</th>
+          <th>Every</th>
+          <th>Next run</th>
+          <th>Last result</th>
+          <th>Active</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <script>
+      const rows = document.getElementById("rows");
+      const urlEl = document.getElementById("url");
+      const hoursEl = document.getElementById("hours");
+      const jitterEl = document.getElementById("jitter");
+      const addBtn = document.getElementById("add");
+
+      function fmt(ts){
+        if(!ts) return "—";
+        return new Date(ts).toLocaleString();
+      }
+
+      async function list() {
+        const res = await fetch("/api/schedules");
+        const json = await res.json();
+        rows.innerHTML = "";
+        for (const e of json.data) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td style="max-width:260px; word-break: break-all;"><a href="${e.url}" target="_blank">${e.url}</a></td>
+            <td>${e.period_hours}h ±${e.jitter_minutes}m</td>
+            <td>${fmt(e.next_run)}</td>
+            <td>${e.last_result ? `<span class="pill ${e.last_result.startsWith('OK')?'ok':'err'}">${e.last_result}</span>`:"—"}</td>
+            <td>${e.active ? "Yes" : "No"}</td>
+            <td class="row">
+              <button data-act="now" data-id="${e.id}">Repost now</button>
+              <button data-act="toggle" data-id="${e.id}">${e.active ? "Pause" : "Resume"}</button>
+              <button data-act="del" data-id="${e.id}">Delete</button>
+            </td>
+          `;
+          rows.appendChild(tr);
+        }
+      }
+
+      addBtn.addEventListener("click", async () => {
+        const url = urlEl.value.trim();
+        const ph = parseFloat(hoursEl.value||"0");
+        const jm = parseInt(jitterEl.value||"0",10);
+        if(!/^https:\/\/www\.leboncoin\.fr\//i.test(url)){ alert("Enter a valid Leboncoin URL."); return; }
+        if(!ph || ph<1){ alert("Hours must be at least 1."); return; }
+        await fetch("/api/schedules", {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ url, periodHours: ph, jitterMinutes: jm })
+        });
+        urlEl.value = "";
+        await list();
+      });
+
+      rows.addEventListener("click", async (e) => {
+        const btn = e.target.closest("button");
+        if(!btn) return;
+        const id = btn.dataset.id;
+        const act = btn.dataset.act;
+        if (act==="now") {
+          await fetch(`/api/schedules/${id}/repost-now`, { method:"POST" });
+        } else if (act==="toggle") {
+          await fetch(`/api/schedules/${id}/toggle`, { method:"POST" });
+        } else if (act==="del") {
+          await fetch(`/api/schedules/${id}`, { method:"DELETE" });
+        }
+        await list();
+      });
+
+      list();
+      setInterval(list, 8000);
+    </script>
+  </body>
+</html>
